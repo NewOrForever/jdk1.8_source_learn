@@ -201,6 +201,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         /**
          * Performs lock.  Try immediate barge, backing up to normal
          * acquire on failure.
+         * 执行锁。尝试立即闯入，失败时回退到正常获取。
          */
         final void lock() {
             if (compareAndSetState(0, 1))

@@ -167,6 +167,18 @@ public class HashMap<K, V> extends AbstractMap<K, V>
      * 结果为>=cap的最小2的自然数幂
      */
     static final int tableSizeFor(int cap) {
+        /**
+         * 减一是为了保证 c 本身是 2 的幂次方时，返回的是 c
+         * 如果不减 1 的话，c 本身是 2 的幂次方时，返回的是 c * 2，这样就会浪费空间
+         *
+         * 下面的移位操作是为了将高位的1 都移动到最低位，然后再加 1，这样就可以保证返回的是 2 的幂次方
+         * 例如：c = 15 = 1111 -> n = c - 1 =14 = 1110
+         * 1110 | 0111 = 1111 -> 1111 | 0011 = 1111 -> 1111 | 0000 = 1111 -> 1111 | 0000 = 1111 => 15 + 1 = 16
+         * 例如：c = 100 = 1100100 -> n = c - 1 = 99 = 1100011
+         * 1100011 | 0110001 = 1110011 -> 1110011 | 0001100 = 1111111 -> 1111111 | 0000111 = 1111111 -> 1111111 | 0000000 = 1111111 => 127 + 1 = 128
+         *
+         * 总结：实际就是最高位的1后面全部变成1，最终加1返回2 的幂次方
+         */
         //先移位再或运算，最终保证返回值是2的整数幂
         int n = cap - 1;
         n |= n >>> 1;
@@ -181,6 +193,8 @@ public class HashMap<K, V> extends AbstractMap<K, V>
 
     /**
      * 哈希桶数组，分配的时候，table的长度总是2的幂
+     * 数据存放的基础数据结构，数组，当 key 的 hash 值相同时，会以链表的形式存储在同一个数组位置，当链表长度超过8时，链表会转换为红黑树
+     * 链表的 head 节点是最早插入的节点，而 tail 节点是最近插入的节点，数组位置指向 head 节点
      */
     transient Node<K, V>[] table;
 
@@ -427,8 +441,10 @@ public class HashMap<K, V> extends AbstractMap<K, V>
      */
     final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
                    boolean evict) {
+        // 声明一个哈希表
         Node<K, V>[] tab;
         Node<K, V> p;
+        // n用来记录哈希表的长度，i用来记录key将被放置的槽位
         int n, i;
         //如果哈希表为空，调用resize()创建一个哈希表，并用变量n记录哈希表长度
         if ((tab = table) == null || (n = tab.length) == 0)
@@ -439,38 +455,40 @@ public class HashMap<K, V> extends AbstractMap<K, V>
          * (n - 1) & hash 本质上是hash % n，位运算更快
          */
         if ((p = tab[i = (n - 1) & hash]) == null)
-            //直接将键值对插入到map中即可
+            //直接将键值对插入到数组中即可
             tab[i] = newNode(hash, key, value, null);
         else {// 桶中已经存在元素
-            Node<K, V> e;
+            Node<K, V> e; // 记录key 相同的节点元素
             K k;
-            // 比较桶中第一个元素(数组中的结点)的hash值相等，key相等
+            // tab[i] 是一个节点且hash值和key值都相等
             if (p.hash == hash &&
                     ((k = p.key) == key || (key != null && key.equals(k))))
-                // 将第一个元素赋值给e，用e来记录
+                // 将第一个元素赋值给e，用e来记录已存在的元素，便于后续新的value值覆盖旧的value值
                 e = p;
-                // 当前桶中无该键值对，且桶是红黑树结构，按照红黑树结构插入
+            // tab[i]是红黑树结构
             else if (p instanceof TreeNode)
+                // 将key-value插入到红黑树中
+                // 遍历树，找到key值相等的节点，如果找到了，就返回这个节点，否则插入新节点到红黑树并返回null
                 e = ((TreeNode<K, V>) p).putTreeVal(this, tab, hash, key, value);
-                // 当前桶中无该键值对，且桶是链表结构，按照链表结构插入到尾部
+            // tab[i]是链表结构，按照链表结构插入到尾部
             else {
                 for (int binCount = 0; ; ++binCount) {
                     // 遍历到链表尾部
                     if ((e = p.next) == null) {
                         p.next = newNode(hash, key, value, null);
-                        // 检查链表长度是否达到阈值，达到将该槽位节点组织形式转为红黑树
+                        // 检查链表长度是否达到阈值 8 且 map 的键值对数量大于等于 64，达到将该槽位节点的链表转换为红黑树
                         if (binCount >= TREEIFY_THRESHOLD - 1) // -1 for 1st
                             treeifyBin(tab, hash);
                         break;
                     }
-                    // 链表节点的<key, value>与put操作<key, value>相同时，不做重复操作，跳出循环
+                    // 链表中已经存在相同的key直接break，后续会覆盖value
                     if (e.hash == hash &&
                             ((k = e.key) == key || (key != null && key.equals(k))))
                         break;
                     p = e;
                 }
             }
-            // 找到或新建一个key和hashCode与插入元素相等的键值对，进行put操作
+            // 存在相同的key，直接覆盖value
             if (e != null) { // existing mapping for key
                 // 记录e的value
                 V oldValue = e.value;
@@ -553,22 +571,35 @@ public class HashMap<K, V> extends AbstractMap<K, V>
         table = newTab;
         //如果旧table不为空，将旧table中的元素复制到新的table中
         if (oldTab != null) {
-            //遍历旧哈希表的每个桶，将旧哈希表中的桶复制到新的哈希表中
+            //遍历旧哈希表的每个元素，将旧哈希表中的元素复制到新的哈希表中
             for (int j = 0; j < oldCap; ++j) {
                 Node<K, V> e;
-                //如果旧桶不为null，使用e记录旧桶
+                //如果旧元素不为null，使用e记录旧元素
                 if ((e = oldTab[j]) != null) {
-                    //将旧桶置为null
+                    //将旧元素置为null
                     oldTab[j] = null;
-                    //如果旧桶中只有一个node
+                    //如果旧元素中只有一个node
                     if (e.next == null)
-                        //将e也就是oldTab[j]放入newTab中e.hash & (newCap - 1)的位置
+                    /**
+                     *  将e也就是oldTab[j]放入newTab中e.hash & (newCap - 1)的位置 =》 也就是e.hash % newCap的位置
+                     *  旧数组的索引位：e.hash % oldCap，55 % 16 = 7            100 % 16 = 4
+                     *  新数组的索引位：e.hash % newCap，55 % 32 = 23         100 % 32 = 4
+                     *  也就是说，新数组的索引位 = 原索引位置 or (数组的索引位 + 旧数组的长度)
+                     *  1. 扩容后原先有 hash 冲突的节点，要么还在原位置，要么就被分配到“原位置+旧容量”这个位置
+                     *  2. 扩容能缩短链表长度
+                     *  3. 扩容后的数组长度是原来的2倍
+                     */
                         newTab[e.hash & (newCap - 1)] = e;
-                        //如果旧桶中的结构为红黑树
+                     //如果旧元素的结构为红黑树
                     else if (e instanceof TreeNode)
-                        //将树中的node分离
+                    /**
+                     * 将树中的node分离，红黑树节点小于等于6时转为链表存储
+                     * 扩容后，原先有 hash 冲突的节点可能不在同一个位置了，所以红黑树的元素个数可能会变少
+                     * 当元素个数小于等于6时，转为链表存储
+                     */
                         ((TreeNode<K, V>) e).split(this, newTab, j, oldCap);
-                    else {  //如果旧桶中的结构为链表,链表重排，jdk1.8做的一系列优化
+                    else {  //如果旧元素中的结构为链表,链表重排，jdk1.8做的一系列优化
+                        // 扩容后链表长度是有可能会变短的
                         Node<K, V> loHead = null, loTail = null;
                         Node<K, V> hiHead = null, hiTail = null;
                         Node<K, V> next;
@@ -1963,6 +1994,7 @@ public class HashMap<K, V> extends AbstractMap<K, V>
                 else if (ph < h)
                     dir = 1;
                 else if ((pk = p.key) == k || (k != null && k.equals(pk)))
+                    // key 值相等，直接返回该节点
                     return p;
                 else if ((kc == null &&
                         (kc = comparableClassFor(k)) == null) ||
@@ -2111,6 +2143,7 @@ public class HashMap<K, V> extends AbstractMap<K, V>
          * @param bit   the bit of hash to split on
          */
         final void split(HashMap<K, V> map, Node<K, V>[] tab, int index, int bit) {
+            // this 是当前的红黑树的根节点
             TreeNode<K, V> b = this;
             // Relink into lo and hi lists, preserving order
             TreeNode<K, V> loHead = null, loTail = null;
@@ -2119,6 +2152,12 @@ public class HashMap<K, V> extends AbstractMap<K, V>
             for (TreeNode<K, V> e = b, next; e != null; e = next) {
                 next = (TreeNode<K, V>) e.next;
                 e.next = null;
+                /**
+                 * 如果hash值与bit (旧容量) 相与为0，说明在原来的位置
+                 * e.hash 的某一位（由 bit 指定的位，bit 是2 的幂次方，也就是只有 1 位是 1 其余位都是 0）的值为0
+                 * 40 = 0010 1000 % 16 = 8
+                 * 40 = 0010 1000 % 32 = 8
+                  */
                 if ((e.hash & bit) == 0) {
                     if ((e.prev = loTail) == null)
                         loHead = e;
@@ -2126,7 +2165,7 @@ public class HashMap<K, V> extends AbstractMap<K, V>
                         loTail.next = e;
                     loTail = e;
                     ++lc;
-                } else {
+                } else { // 不在原位置
                     if ((e.prev = hiTail) == null)
                         hiHead = e;
                     else
@@ -2136,21 +2175,31 @@ public class HashMap<K, V> extends AbstractMap<K, V>
                 }
             }
 
+            // 当红黑树节点元素小于等于6时，转为链表
             if (loHead != null) {
                 if (lc <= UNTREEIFY_THRESHOLD)
+                    // 将红黑树转为链表
                     tab[index] = loHead.untreeify(map);
                 else {
                     tab[index] = loHead;
+                    // 如果旧位置或者新位置没有元素那么就直接将单向链表赋值给对应位置
                     if (hiHead != null) // (else is already treeified)
+                        // 如果新下标的位置有元素，旧位置的元素转成红黑树
                         loHead.treeify(tab);
                 }
             }
             if (hiHead != null) {
                 if (hc <= UNTREEIFY_THRESHOLD)
+                /**
+                 * index + bit 是不在原位置的元素的新的下标
+                 * 48 = 0011 0000 % 16 = 0
+                 * 48 = 0011 0000 % 32 = 16 =》0 + 16
+                  */
                     tab[index + bit] = hiHead.untreeify(map);
                 else {
                     tab[index + bit] = hiHead;
                     if (loHead != null)
+                        // 如果旧位置有元素，新位置的元素转成红黑树
                         hiHead.treeify(tab);
                 }
             }

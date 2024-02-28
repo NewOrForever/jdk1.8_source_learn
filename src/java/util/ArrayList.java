@@ -46,7 +46,11 @@ public class ArrayList<E> extends AbstractList<E>
     private static final int DEFAULT_CAPACITY = 10;
 
     /**
-     * 空的对象数组
+     * 空的对象数组 有参构造构造函数初始化而来 <br/>
+     *
+     * 两个空的数组有什么区别呢？ <br/>
+     * 就是第一次添加元素时知道该 elementData 从空的构造函数还是有参构造函数被初始化的。以便确认如何扩容。<br/>
+     * 空的构造器则初始化为10，有参构造器则按照扩容因子扩容<br/>
      */
     private static final Object[] EMPTY_ELEMENTDATA = {};
 
@@ -136,14 +140,14 @@ public class ArrayList<E> extends AbstractList<E>
      * @param minCapacity 所需的最小容量
      */
     public void ensureCapacity(int minCapacity) {
-        //如果数组为空，容量预取0，否则去默认值(10)
+        // 如果数组为空，容量预取0，否则去默认值(10)
         int minExpand = (elementData != DEFAULTCAPACITY_EMPTY_ELEMENTDATA)
                 // any size if not default element table
                 ? 0
                 // larger than default for default empty table. It's already
                 // supposed to be at default size.
                 : DEFAULT_CAPACITY;
-        //若参数大于预设的容量，在使用该参数进一步设置数组容量
+        // 若参数大于预设的容量，在使用该参数进一步设置数组容量
         if (minCapacity > minExpand) {
             ensureExplicitCapacity(minCapacity);
         }
@@ -197,7 +201,7 @@ public class ArrayList<E> extends AbstractList<E>
         // 不够就将数组长度设置为需要的长度
         if (newCapacity - minCapacity < 0)
             newCapacity = minCapacity;
-        //若预设值大于默认的最大值检查是否溢出
+        // 若预设值大于默认的最大值检查是否溢出
         if (newCapacity - MAX_ARRAY_SIZE > 0)
             newCapacity = hugeCapacity(minCapacity);
         // 调用Arrays.copyOf方法将elementData数组指向新的内存空间时newCapacity的连续空间
@@ -406,9 +410,9 @@ public class ArrayList<E> extends AbstractList<E>
         rangeCheckForAdd(index);
         // 扩容
         ensureCapacityInternal(size + 1);  // Increments modCount!!
-        //public static void arraycopy(Object src, int srcPos, Object dest, int destPos, int length)
-        //src:源数组； srcPos:源数组要复制的起始位置； dest:目的数组； destPos:目的数组放置的起始位置； length:复制的长度
-        // 将elementData从index位置开始，复制到elementData的index+1开始的连续空间
+        // public static void arraycopy(Object src, int srcPos, Object dest, int destPos, int length)
+        // src:源数组； srcPos:源数组要复制的起始位置； dest:目的数组； destPos:目的数组放置的起始位置； length:复制的长度
+        //  依次复制插入位置及后面的数组元素，到后面一格，不是移动，因此复制完后，添加的下标位置和下一个位置指向对同一个对象
         System.arraycopy(elementData, index, elementData, index + 1,
                 size - index);
         // 在elementData的index位置赋值element

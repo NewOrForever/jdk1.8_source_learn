@@ -93,9 +93,11 @@ public class HashSet<E>
 {
     static final long serialVersionUID = -5024744406713321676L;
 
+    // 底层基于 HashMap 实现，key 就是 HashSet 的元素
     private transient HashMap<E,Object> map;
 
     // Dummy value to associate with an Object in the backing Map
+    // 用于 HashMap 的 value，使用一个静态常量来作为一个虚拟值
     private static final Object PRESENT = new Object();
 
     /**

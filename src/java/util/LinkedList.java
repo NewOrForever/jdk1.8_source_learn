@@ -915,6 +915,7 @@ public class LinkedList<E>
                 throw new IllegalStateException();
 
             Node<E> lastNext = lastReturned.next;
+            // 从链表中删除节点
             unlink(lastReturned);
             if (next == lastReturned)
                 next = lastNext;
