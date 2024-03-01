@@ -572,6 +572,7 @@ public abstract class AbstractQueuedSynchronizer
      * The number of nanoseconds for which it is faster to spin
      * rather than to use timed park. A rough estimate suffices
      * to improve responsiveness with very short timeouts.
+     * 在某些非常短的超时时间（以纳秒为单位）内，线程选择自旋而不是使用带有超时时间的park可能是更快的选择，因为它避免了进入和退出休眠状态的开销。
      */
     static final long spinForTimeoutThreshold = 1000L;
 
@@ -2074,10 +2075,13 @@ public abstract class AbstractQueuedSynchronizer
                     transferAfterCancelledWait(node);
                     break;
                 }
+                // 在某些非常短的超时时间（以纳秒为单位）内，线程选择自旋而不是使用带有超时时间的park可能是更快的选择，因为它避免了进入和退出休眠状态的开销。
+                // 超过 1000ns 的超时时间，线程会使用 park 方法进入休眠状态
                 if (nanosTimeout >= spinForTimeoutThreshold)
                     LockSupport.parkNanos(this, nanosTimeout);
                 if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)
                     break;
+                // 计算剩余的超时时间用于自旋
                 nanosTimeout = deadline - System.nanoTime();
             }
             if (acquireQueued(node, savedState) && interruptMode != THROW_IE)

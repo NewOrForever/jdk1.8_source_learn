@@ -36,6 +36,7 @@
 package java.util.concurrent;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.*;
@@ -151,11 +152,15 @@ public class ScheduledThreadPoolExecutor
 
     /**
      * False if should cancel/suppress periodic tasks on shutdown.
+     * 如果应该在线程池 shutdown 时取消/抑制周期性任务，则为false。
+     * true 表示在 shutdown 后继续执行已提交的周期性任务
      */
     private volatile boolean continueExistingPeriodicTasksAfterShutdown;
 
     /**
      * False if should cancel non-periodic tasks on shutdown.
+     * 如果应该在线程池 shutdown 时取消非周期性任务，则为false。
+     * true 表示在 shutdown 后继续执行已提交的延迟任务
      */
     private volatile boolean executeExistingDelayedTasksAfterShutdown = true;
 
@@ -236,6 +241,10 @@ public class ScheduledThreadPoolExecutor
             return unit.convert(time - now(), NANOSECONDS);
         }
 
+        /**
+         * 根据time的先后时间排序（time小的排在前面）
+         * 若time相同则根据sequenceNumber排序（ sequenceNumber小的排在前面）
+         */
         public int compareTo(Delayed other) {
             if (other == this) // compare zero if same object
                 return 0;
@@ -286,6 +295,8 @@ public class ScheduledThreadPoolExecutor
          * Overrides FutureTask version so as to reset/requeue if periodic.
          */
         public void run() {
+            // period != 0 表示周期性任务
+            // period == 0 表示一次性任务
             boolean periodic = isPeriodic();
             if (!canRunInCurrentRunState(periodic))
                 cancel(false);
@@ -301,10 +312,12 @@ public class ScheduledThreadPoolExecutor
     /**
      * Returns true if can run a task given current run state
      * and run-after-shutdown parameters.
-     *
+     * 如果当前运行状态和运行后关闭参数允许运行任务，则返回true。
      * @param periodic true if this task periodic, false if delayed
+     *                 如果此任务周期性，则为true，如果延迟，则为false
      */
     boolean canRunInCurrentRunState(boolean periodic) {
+        // 主要时用来判断线程池为 SHUTDOWN 状态时是否可以继续执行任务
         return isRunningOrShutdown(periodic ?
                                    continueExistingPeriodicTasksAfterShutdown :
                                    executeExistingDelayedTasksAfterShutdown);
@@ -325,12 +338,16 @@ public class ScheduledThreadPoolExecutor
         if (isShutdown())
             reject(task);
         else {
+            /**@see DelayedWorkQueue*/
             super.getQueue().add(task);
+            // 当前运行状态为 SHUTDOWN 时是否可以继续执行任务
+            // 不能的话从队列中移除任务并取消此任务
             if (isShutdown() &&
                 !canRunInCurrentRunState(task.isPeriodic()) &&
                 remove(task))
                 task.cancel(false);
             else
+                // 确保线程池中有一个线程执行任务
                 ensurePrestart();
         }
     }
@@ -488,6 +505,7 @@ public class ScheduledThreadPoolExecutor
 
     /**
      * Returns the trigger time of a delayed action.
+     * 延迟任务的触发时间
      */
     private long triggerTime(long delay, TimeUnit unit) {
         return triggerTime(unit.toNanos((delay < 0) ? 0 : delay));
@@ -495,9 +513,12 @@ public class ScheduledThreadPoolExecutor
 
     /**
      * Returns the trigger time of a delayed action.
+     * 返回延迟任务的触发时间
      */
     long triggerTime(long delay) {
         return now() +
+                // 当前任务的延迟时间小于 Long.MAX_VALUE 右移 1 位（一半）时，直接返回当前时间 + 延迟时间
+                // 否则 delay 需要调用 overflowFree 方法来进行修正防止溢出，避免队列中出现由于溢出导致的排序紊乱
             ((delay < (Long.MAX_VALUE >> 1)) ? delay : overflowFree(delay));
     }
 
@@ -507,11 +528,26 @@ public class ScheduledThreadPoolExecutor
      * This may occur if a task is eligible to be dequeued, but has
      * not yet been, while some other task is added with a delay of
      * Long.MAX_VALUE.
+     * 约束队列中所有延迟的值在 Long.MAX_VALUE 之内，以避免 compareTo 中的溢出。
+     * 这可能发生在一个任务有资格出队，但尚未出队时，另一个任务以 Long.MAX_VALUE 的延迟被添加。
+     *
+     * 主要就是有这么一种情况：
+     * 某个任务的delay为负数，说明当前可以执行(其实早该执行了)。
+     * 工作队列中维护任务顺序是基于compareTo的，在compareTo中比较两个任务的顺序会用time相减，负数则说明优先级高。
+     *
+     * 那么就有可能出现一个delay为正数,减去另一个为负数的delay，结果上溢为负数，则会导致compareTo产生错误的结果。
+     *
+     * 为了特殊处理这种情况，首先判断一下队首的delay是不是负数，如果是正数不用管了,怎么减都不会溢出。
+     * 否则可以拿当前delay减去队首的delay来比较看，如果不出现上溢，则整个队列都ok，排序不会乱。
+     * 不然就把当前delay值给调整为Long.MAX_VALUE + 队首delay。
      */
     private long overflowFree(long delay) {
+        // 队列中的第一个任务
         Delayed head = (Delayed) super.getQueue().peek();
         if (head != null) {
+            // 队列中的第一个任务的延迟时间
             long headDelay = head.getDelay(NANOSECONDS);
+            // 如果队列中的第一个任务的延迟时间为负数，且当前任务的delay - headDelay 上溢为负数，则将当前任务的delay调整为 Long.MAX_VALUE + headDelay
             if (headDelay < 0 && (delay - headDelay < 0))
                 delay = Long.MAX_VALUE + headDelay;
         }
@@ -521,14 +557,18 @@ public class ScheduledThreadPoolExecutor
     /**
      * @throws RejectedExecutionException {@inheritDoc}
      * @throws NullPointerException       {@inheritDoc}
+     * delay：延迟时间，<= 0 时立即执行
      */
     public ScheduledFuture<?> schedule(Runnable command,
                                        long delay,
                                        TimeUnit unit) {
         if (command == null || unit == null)
             throw new NullPointerException();
+        // 将任务包装成 ScheduledFutureTask
         RunnableScheduledFuture<?> t = decorateTask(command,
+            // period 为 0
             new ScheduledFutureTask<Void>(command, null,
+                                          // 计算任务的触发时间
                                           triggerTime(delay, unit)));
         delayedExecute(t);
         return t;
@@ -830,12 +870,21 @@ public class ScheduledThreadPoolExecutor
          * appear at most once in the queue (this need not be true for
          * other kinds of tasks or work queues), so are uniquely
          * identified by heapIndex.
+         *
+         * DelayedWorkQueue 基于类似 DelayQueue 和 PriorityQueue 的基于堆的数据结构，但每个 ScheduledFutureTask
+         * 还记录其在堆数组中的索引。这消除了在取消任务时需要查找任务的需要，从而大大提高了删除速度（从 O(n) 降低到 O(log n)），并减少
+         * 了在元素上升到顶部之前等待清除而导致的垃圾保留。但是因为队列还可能包含不是 ScheduledFutureTasks 的 RunnableScheduledFutures，所以
+         * 我们不能保证有可用的索引，在这种情况下，我们回退到线性搜索。（我们预计大多数任务不会被装饰，并且更快的情况会更为常见。）
+         * 所有堆操作都必须记录索引更改——主要在 siftUp 和 siftDown 中。在删除时，任务的 heapIndex 设置为 -1。请注意，ScheduledFutureTasks
+         * 在队列中最多只能出现一次（对于其他类型的任务或工作队列，这不一定成立），因此它们通过 heapIndex 被唯一标识。
          */
 
         private static final int INITIAL_CAPACITY = 16;
+        /**数组 - 队列 - 堆数据结构*/
         private RunnableScheduledFuture<?>[] queue =
             new RunnableScheduledFuture<?>[INITIAL_CAPACITY];
         private final ReentrantLock lock = new ReentrantLock();
+        /**队列(堆)中的元素个数*/
         private int size = 0;
 
         /**
@@ -873,17 +922,33 @@ public class ScheduledThreadPoolExecutor
         /**
          * Sifts element added at bottom up to its heap-ordered spot.
          * Call only when holding lock.
+         * 堆数据结构中对新添加的元素进行上浮（sift up）操作，以确保堆的有序性
+         *
+         * 有一个新元素被添加到了堆的底部，在堆中，底部通常指的是堆数组的末尾
+         * 新添加的元素需要被上浮到它在堆中应有的位置，以保持堆的有序性
+         * 新元素在堆中根据堆的排序规则应该占据它应该在的位置
+         *
+         * 相当于从最底部开始按照 compareTo 规则逐一向上比较，直至上浮到正确的位置
          */
         private void siftUp(int k, RunnableScheduledFuture<?> key) {
+            // k = 0 时，key 节点已经是堆顶了，不需要再上浮了
             while (k > 0) {
+                // 获取父节点
                 int parent = (k - 1) >>> 1;
                 RunnableScheduledFuture<?> e = queue[parent];
+                /**
+                 * @see ScheduledFutureTask#compareTo(Delayed)
+                 * 如果新添加的元素的触发时间大于等于父节点的触发时间，则不需要排序了
+                  */
                 if (key.compareTo(e) >= 0)
                     break;
+                // key 节点的触发时间小于父节点的触发时间，当前节点与父节点交换位置
                 queue[k] = e;
                 setIndex(e, k);
+                // 将父节点的索引赋值给 k，继续循环
                 k = parent;
             }
+            // 将 key 节点放到最终的位置
             queue[k] = key;
             setIndex(key, k);
         }
@@ -891,21 +956,38 @@ public class ScheduledThreadPoolExecutor
         /**
          * Sifts element added at top down to its heap-ordered spot.
          * Call only when holding lock.
+         * 堆数据结构中对新添加的元素进行下沉（sift down）操作，以确保堆的有序性
+         *
+         * 有一个新元素被添加到了堆的顶部，在堆中，顶部通常指的是堆数组的第一个元素
+         * 新添加的元素需要被下沉到它在堆中应有的位置，以保持堆的有序性
+         * 新元素在堆中根据堆的排序规则应该占据它应该在的位置
+         *
+         * 最小堆的数据结构：https://www.cs.usfca.edu/~galles/visualization/Heap.html
+         * 父节点的值小于等于子节点的值
          */
         private void siftDown(int k, RunnableScheduledFuture<?> key) {
+            // 在一个完全二叉堆中，如果某个节点的索引大于堆的一半，那么它就是一个叶节点，没有子节点
             int half = size >>> 1;
+            // 如果 key 节点的索引小于 half，说明 key 节点有子节点
             while (k < half) {
+                // 找到左子节点
                 int child = (k << 1) + 1;
                 RunnableScheduledFuture<?> c = queue[child];
+                // 选出左右子节点中较小的一个给 c
                 int right = child + 1;
                 if (right < size && c.compareTo(queue[right]) > 0)
                     c = queue[child = right];
+                // 如果 key 节点的触发时间小于等于子节点的触发时间，则不需要排序了
                 if (key.compareTo(c) <= 0)
                     break;
+                // key 节点的大于子节点，将子节点放到 key 节点的位置
+                // 交换当前节点和子节点 - 父子节点交换位置
                 queue[k] = c;
                 setIndex(c, k);
+                // 将子节点的索引赋值给 k，继续循环下沉 - 此时key 在子节点的位置
                 k = child;
             }
+            // 将 key 节点放到最终的位置
             queue[k] = key;
             setIndex(key, k);
         }
@@ -915,9 +997,12 @@ public class ScheduledThreadPoolExecutor
          */
         private void grow() {
             int oldCapacity = queue.length;
+            // 扩容 50%
             int newCapacity = oldCapacity + (oldCapacity >> 1); // grow 50%
+            // 溢出则直接取 Integer.MAX_VALUE
             if (newCapacity < 0) // overflow
                 newCapacity = Integer.MAX_VALUE;
+            // 数组拷贝到新容量的数组中
             queue = Arrays.copyOf(queue, newCapacity);
         }
 
@@ -1009,18 +1094,32 @@ public class ScheduledThreadPoolExecutor
             final ReentrantLock lock = this.lock;
             lock.lock();
             try {
+                // 元素个数
                 int i = size;
+                // 队列容量不够时，扩容 50%
                 if (i >= queue.length)
                     grow();
                 size = i + 1;
                 if (i == 0) {
+                    // 队列中没有元素时，直接将 e 放到队列的第一个位置
+                    // 这里其实可以不用特判，直接调用 siftUp 方法统一处理即可
                     queue[0] = e;
+                    // 设置 e 的堆中的索引为 0，后续直接可以通过 task 的 heapIndex 来定位在堆(队列)中的位置
                     setIndex(e, 0);
                 } else {
+                    /**
+                     * 队列中有元素时，将 e 放到队列的最后一个位置
+                     * 然后进行上浮操作重新调整堆
+                     */
                     siftUp(i, e);
                 }
                 if (queue[0] == e) {
+                    // 如果新加入的元素成为了堆顶,则原先的leader就无效了
                     leader = null;
+                    /**
+                     * @see AbstractQueuedSynchronizer.ConditionObject#signal()
+                     * 由于原先leader已经无效被设置为null了, 这里随便唤醒一个线程(未必是原先的leader)来取走堆顶任务
+                      */
                     available.signal();
                 }
             } finally {
@@ -1048,11 +1147,16 @@ public class ScheduledThreadPoolExecutor
          * @param f the task to remove and return
          */
         private RunnableScheduledFuture<?> finishPoll(RunnableScheduledFuture<?> f) {
+            // 队列中最后一个任务的索引
             int s = --size;
+            // 取出队列中最后一个任务
             RunnableScheduledFuture<?> x = queue[s];
+            // 将队列中最后一个任务置为 null
             queue[s] = null;
             if (s != 0)
+                // 将队列中最后一个任务放到队列的第一个位置
                 siftDown(0, x);
+            // 将 f 的堆中的索引置为 -1，表示 f 已经不在堆中
             setIndex(f, -1);
             return f;
         }
@@ -1117,20 +1221,37 @@ public class ScheduledThreadPoolExecutor
                         if (nanos <= 0)
                             return null;
                         else
+                            /**队列中没有任务 park 等待 keepAliveTime*/
                             nanos = available.awaitNanos(nanos);
                     } else {
+                        // 队列中有任务
+                        // 获取 任务的触发时间 - 当前时间，如果 <= 0，说明任务已到触发时间，返回该任务供线程执行
                         long delay = first.getDelay(NANOSECONDS);
                         if (delay <= 0)
+                        /**
+                         * 返回并移除队列中的第一个任务
+                         * 将队列中最后一个任务放到队列的第一个位置，然后进行下沉操作重新调整堆
+                         * 堆的第一个节点被其子节点/最后一个节点替换，这个移除节点并重新调整堆的过程称为下沉（这个算法有点意思的）
+                         */
                             return finishPoll(first);
+                        // keepAliveTime <= 0 时，直接返回 null
                         if (nanos <= 0)
                             return null;
                         first = null; // don't retain ref while waiting
+                        // keepAliveTime < delay 时，等待 keepAliveTime
+                        // 第一次进入时，leader 为 null
                         if (nanos < delay || leader != null)
+                            /** park 等待 */
                             nanos = available.awaitNanos(nanos);
                         else {
                             Thread thisThread = Thread.currentThread();
+                            // leader 为当前线程
                             leader = thisThread;
                             try {
+                                /**
+                                 * park 等待 delay 时间
+                                 * @see AbstractQueuedSynchronizer.ConditionObject#awaitNanos(long)
+                                  */
                                 long timeLeft = available.awaitNanos(delay);
                                 nanos -= delay - timeLeft;
                             } finally {
