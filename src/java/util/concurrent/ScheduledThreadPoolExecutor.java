@@ -607,6 +607,11 @@ public class ScheduledThreadPoolExecutor
             new ScheduledFutureTask<Void>(command,
                                           null,
                                           triggerTime(initialDelay, unit),
+                                        /**
+                                         * @see ScheduledFutureTask#setNextRunTime()
+                                         * period 为正数
+                                         * 下次执行开始时间为 上次执行开始时间 + delay
+                                         */
                                           unit.toNanos(period));
         RunnableScheduledFuture<Void> t = decorateTask(command, sft);
         sft.outerTask = t;
@@ -631,7 +636,12 @@ public class ScheduledThreadPoolExecutor
             new ScheduledFutureTask<Void>(command,
                                           null,
                                           triggerTime(initialDelay, unit),
-                                          unit.toNanos(-delay));
+                                        /**
+                                         * @see ScheduledFutureTask#setNextRunTime()
+                                         * period 为负数
+                                         * 下次执行开始时间为 上次任务执行完成后 当前时间 + delay
+                                         */
+                                        unit.toNanos(-delay));
         RunnableScheduledFuture<Void> t = decorateTask(command, sft);
         sft.outerTask = t;
         delayedExecute(t);
@@ -1182,10 +1192,14 @@ public class ScheduledThreadPoolExecutor
                 for (;;) {
                     RunnableScheduledFuture<?> first = queue[0];
                     if (first == null)
+                        /**队列中没有任务 park 等待*/
                         available.await();
                     else {
+                        // 队列中有任务
+                        // 获取 任务的触发时间 - 当前时间，如果 <= 0，说明任务已到触发时间，返回该任务供线程执行
                         long delay = first.getDelay(NANOSECONDS);
                         if (delay <= 0)
+                            // 返回并移除队列中的第一个任务
                             return finishPoll(first);
                         first = null; // don't retain ref while waiting
                         if (leader != null)
@@ -1194,6 +1208,10 @@ public class ScheduledThreadPoolExecutor
                             Thread thisThread = Thread.currentThread();
                             leader = thisThread;
                             try {
+                                /**
+                                 * park 等待 delay 时间
+                                 * @see AbstractQueuedSynchronizer.ConditionObject#awaitNanos(long)
+                                 */
                                 available.awaitNanos(delay);
                             } finally {
                                 if (leader == thisThread)
