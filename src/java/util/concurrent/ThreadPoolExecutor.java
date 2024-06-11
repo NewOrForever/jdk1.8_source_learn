@@ -1768,12 +1768,21 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * thread is started even if corePoolSize is 0.
      */
     void ensurePrestart() {
+        /**
+         * 这个方法的作用是确保线程池中至少有一个线程在运行
+         * 1. 如果线程池核心线程数大于 0
+         *      - 如果当前线程池中的线程数小于核心线程数，创建一个工作线程
+         *      - 如果当前线程池中的线程数大于等于核心线程数，不做任何操作
+         * 2. 如果线程池核心线程数等于 0
+         *     - 创建一个工作线程
+         *     - 后面除非工作线程数重新变为 0，否则不会再创建工作线程，所有的任务都有该线程从延迟队列中获取并执行
+         */
         int wc = workerCountOf(ctl.get());
         if (wc < corePoolSize)
             // 工作线程数小于核心线程数，创建一个工作线程
             addWorker(null, true);
         else if (wc == 0)
-            // corePoolSize 为 0 的情况下，创建一个工作线程
+            // corePoolSize 核心线程数 为 0 的情况下，创建一个工作线程
             addWorker(null, false);
     }
 

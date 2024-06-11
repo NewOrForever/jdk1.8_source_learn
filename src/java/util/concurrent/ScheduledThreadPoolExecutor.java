@@ -912,6 +912,12 @@ public class ScheduledThreadPoolExecutor
          * thread, but not necessarily the current leader, is
          * signalled.  So waiting threads must be prepared to acquire
          * and lose leadership while waiting.
+         * 这是一个线程，它被指定等待队列头部的任务。
+         * 这种领导者-跟随者模式的变体（http://www.cs.wustl.edu/~schmidt/POSA/POSA2/）旨在最小化不必要的定时等待。
+         * 当一个线程成为领导者时，它只等待下一个延迟过去，但其他线程无限期地等待。
+         * 领导者线程在从 take() 或 poll(...) 返回之前必须向其他一些线程发出信号，除非在此期间有其他线程成为领导者。
+         * 每当队列头部被替换为具有更早到期时间的任务时，领导者字段通过被重置为 null 而失效，并且
+         * 某个等待线程（但不一定是当前的领导者）被发出信号。因此，等待的线程必须准备好在等待时获取和失去领导权。
          */
         private Thread leader = null;
 
@@ -942,23 +948,31 @@ public class ScheduledThreadPoolExecutor
          */
         private void siftUp(int k, RunnableScheduledFuture<?> key) {
             // k = 0 时，key 节点已经是堆顶了，不需要再上浮了
+            // k 是堆中元素（不包括新元素）的个数，k-1 是最后一个元素的索引，k是新元素的索引
             while (k > 0) {
-                // 获取父节点
+                // 获取新元素的父节点索引
+                // 二叉树中，父节点的索引为 (子节点的索引 - 1) / 2
+                // 假设当前堆中有3个元素，k = 3，新元素的索引为 3，父节点的索引为 (3 - 1) / 2 = 1
                 int parent = (k - 1) >>> 1;
+                // 获取父节点元素
                 RunnableScheduledFuture<?> e = queue[parent];
                 /**
+                 * 比较新元素和父节点的大小，新元素 < 父节点则上浮
                  * @see ScheduledFutureTask#compareTo(Delayed)
                  * 如果新添加的元素的触发时间大于等于父节点的触发时间，则不需要排序了
                   */
                 if (key.compareTo(e) >= 0)
                     break;
-                // key 节点的触发时间小于父节点的触发时间，当前节点与父节点交换位置
+                // key 节点（新元素）的触发时间小于父节点的触发时间 -> 上浮新元素
+                // 当前节点与父节点交换位置
                 queue[k] = e;
+                // 父节点元素的堆索引设置为父节点的索引
                 setIndex(e, k);
-                // 将父节点的索引赋值给 k，继续循环
+                // 将父节点的索引赋值给 k，继续循环 -> 上浮直到根节点或者新元素小于父节点
+                // 此时 新元素 在父节点的位置
                 k = parent;
             }
-            // 将 key 节点放到最终的位置
+            // 将 key 节点（新元素）放到最终的位置
             queue[k] = key;
             setIndex(key, k);
         }
@@ -976,6 +990,7 @@ public class ScheduledThreadPoolExecutor
          * 父节点的值小于等于子节点的值
          */
         private void siftDown(int k, RunnableScheduledFuture<?> key) {
+            // k 是需要下沉的节点的索引，key 是需要下沉的元素
             // 在一个完全二叉堆中，如果某个节点的索引大于堆的一半，那么它就是一个叶节点，没有子节点
             int half = size >>> 1;
             // 如果 key 节点的索引小于 half，说明 key 节点有子节点
@@ -987,7 +1002,7 @@ public class ScheduledThreadPoolExecutor
                 int right = child + 1;
                 if (right < size && c.compareTo(queue[right]) > 0)
                     c = queue[child = right];
-                // 如果 key 节点的触发时间小于等于子节点的触发时间，则不需要排序了
+                // 如果 key 节点（下沉元素）的触发时间小于等于子节点的触发时间，则不需要继续下沉了
                 if (key.compareTo(c) <= 0)
                     break;
                 // key 节点的大于子节点，将子节点放到 key 节点的位置
@@ -1161,10 +1176,11 @@ public class ScheduledThreadPoolExecutor
             int s = --size;
             // 取出队列中最后一个任务
             RunnableScheduledFuture<?> x = queue[s];
-            // 将队列中最后一个任务置为 null
+            // 将队列中最后一个任务置为 null，相当于删掉了最后一个节点
             queue[s] = null;
             if (s != 0)
-                // 将队列中最后一个任务放到队列的第一个位置
+                // 队列中如果至少有两个任务
+                // 将队列中最后一个任务放到队列的第一个位置 -> 然后进行下沉操作重新调整堆
                 siftDown(0, x);
             // 将 f 的堆中的索引置为 -1，表示 f 已经不在堆中
             setIndex(f, -1);
@@ -1177,8 +1193,10 @@ public class ScheduledThreadPoolExecutor
             try {
                 RunnableScheduledFuture<?> first = queue[0];
                 if (first == null || first.getDelay(NANOSECONDS) > 0)
+                    // 队列中没有任务或者第一个任务的延迟时间 > 0，返回 null
                     return null;
                 else
+                    // 返回并移除队列中的第一个任务
                     return finishPoll(first);
             } finally {
                 lock.unlock();
