@@ -453,6 +453,7 @@ public class HashMap<K, V> extends AbstractMap<K, V>
          * 如果指定参数hash在表中没有对应的桶，即为没有碰撞
          * Hash函数，(n - 1) & hash 计算key将被放置的槽位
          * (n - 1) & hash 本质上是hash % n，位运算更快
+         * 因为 hash 桶的容量 n（数组长度）是 2 的幂次方，所以 hash & (n - 1) 等价于 hash % n
          */
         if ((p = tab[i = (n - 1) & hash]) == null)
             //直接将键值对插入到数组中即可
