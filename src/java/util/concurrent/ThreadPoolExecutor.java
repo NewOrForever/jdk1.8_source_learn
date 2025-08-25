@@ -1141,7 +1141,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
             int rs = runStateOf(c);
 
             // Check if queue empty only if necessary.
-            // 线程池状态 >= stop 或者 (线程池状态 >= shutdown 并且 任务队列为空)，工作线程数减 1 并返回 null
+            // 线程池状态 >= shutdown 并且 (线程池状态 >= stop 或者 任务队列为空)，工作线程数减 1 并返回 null
             if (rs >= SHUTDOWN && (rs >= STOP || workQueue.isEmpty())) {
                 decrementWorkerCount();
                 return null;
@@ -1244,7 +1244,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
           */
         Runnable task = w.firstTask;
         w.firstTask = null;
-        w.unlock(); // allow interrupts 把state从‐1改为0 意思是可以允许中断
+        w.unlock(); // allow interrupts 把state从‐1改为0 意思是可以允许中断   AQS 的 state 状态 -1 -> 0
         boolean completedAbruptly = true; // 是否异常结束
         try {
             /**

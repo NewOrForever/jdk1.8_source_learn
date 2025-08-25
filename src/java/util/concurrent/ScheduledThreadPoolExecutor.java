@@ -303,7 +303,9 @@ public class ScheduledThreadPoolExecutor
             else if (!periodic)
                 ScheduledFutureTask.super.run();
             else if (ScheduledFutureTask.super.runAndReset()) {
+                // 周期性任务下次执行时间
                 setNextRunTime();
+                // 同一个任务周期执行
                 reExecutePeriodic(outerTask);
             }
         }
@@ -339,6 +341,7 @@ public class ScheduledThreadPoolExecutor
             reject(task);
         else {
             /**@see DelayedWorkQueue*/
+            // 直接先将任务添加到延迟队列中
             super.getQueue().add(task);
             // 当前运行状态为 SHUTDOWN 时是否可以继续执行任务
             // 不能的话从队列中移除任务并取消此任务
@@ -614,6 +617,7 @@ public class ScheduledThreadPoolExecutor
                                          */
                                           unit.toNanos(period));
         RunnableScheduledFuture<Void> t = decorateTask(command, sft);
+        // 同一个任务周期执行
         sft.outerTask = t;
         delayedExecute(t);
         return t;
@@ -643,6 +647,7 @@ public class ScheduledThreadPoolExecutor
                                          */
                                         unit.toNanos(-delay));
         RunnableScheduledFuture<Void> t = decorateTask(command, sft);
+        // 同一个任务周期执行
         sft.outerTask = t;
         delayedExecute(t);
         return t;
